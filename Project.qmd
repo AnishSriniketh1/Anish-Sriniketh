@@ -1,0 +1,408 @@
+---
+title: "Blog Post"
+format: html
+editor: visual
+Execute:
+ Warning: False
+---
+
+Hello! For this blog post I will be analyzing Indian Premier League(IPL) tweets. I am a big cricket fan and chose this data. This data is IPL tweets from 2020, 2021, and 2022. The data was sourced from Kaggle (https://www.kaggle.com/datasets/kaushiksuresh147/ipl2020-tweets). This data contains the user name, user followers, if the user is verified, if the tweet is a re tweet, the date of the tweet, and the tweet itself.
+
+I will be exploring 3 main research questions. 1. Do sentiments an emotions change by year or by user verification status? Did sentiments become more positive the more time after COVID? Do verified profiles have more positive sentiments? 2. Does user follower count affect sentiments? 3. Do the most important words change over time or by user verification status?
+
+First we load our packages and read in our data.
+
+```{r}
+
+library(tidyverse)
+library(tidytext)
+library(topicmodels)
+library(lubridate)
+library(tinytex)
+```
+
+```{r}
+ipl2020 <- read.csv("IPL2020_tweets.csv")
+ipl2021 <- read.csv("IPL_2021_tweets.csv")
+ipl2022 <- read.csv("IPL_2022_tweets.csv")
+```
+
+```{r}
+ipl2020 <- ipl2020 %>%
+  select(-month, -year)
+```
+
+Here I am changing the data type to for user_friends and user_favourites in order to match with the first file in order to combine them.
+
+```{r}
+ipl2021 <- ipl2021 %>%
+  mutate(user_friends = as.numeric(user_friends),
+         user_favourites = as.numeric(user_favourites))
+```
+
+```{r}
+ipl2022 <- ipl2022 %>%
+  mutate(user_friends = as.numeric(user_friends),
+         user_favourites = as.numeric(user_favourites))
+```
+
+Here I combined all 3 files into 1 and added a column "year".
+
+```{r}
+iplAll <- bind_rows(ipl2020,ipl2021,ipl2022)
+iplAll$date <- as.Date(iplAll$date)
+iplAll <- iplAll %>%
+  mutate(year = year(date))
+```
+
+```{r}
+range(iplAll$date, na.rm = TRUE)
+```
+
+```{r}
+nrow(iplAll)
+```
+
+Here is some basic EDA. The dates range from 8/15/2020 to 6/20/2022 and there are 1,400,026 total tweets in the data.
+
+```{r}
+new_stops <- tibble(word = c("win","join","super","won","top","winning","wins","winner","hope","lost","congratulations","love","happy","ipl","ipl2020","ipl2021","ipl2022","t.co","https","vicustomercare","0","1","2","3","4","5","6","30","2020","2021","2022","cricket","follow","runs","19","match","live","overs","score","toss","watch","vi","april","network","updates"))
+
+stop_words <- stop_words %>%
+  bind_rows(new_stops)
+```
+
+I added some more stop words here as these words were fillers words that did not add much analysis to the data.
+
+```{r}
+clean_ipl <- iplAll %>%
+  unnest_tokens(input = text, output = word) %>%
+  anti_join(stop_words) %>%
+  mutate(user_verified = ifelse(user_verified == "TRUE", "True",
+                                ifelse(user_verified == "FALSE",
+                                       "False", user_verified))) %>%
+  mutate(is_retweet = ifelse(is_retweet != "False", "True", "False"))
+```
+
+```{r}
+clean_ipl %>%
+  nrow()
+```
+
+```{r}
+unique(clean_ipl$word) %>% 
+  tibble() %>% 
+  nrow()
+```
+
+Some more EDA here. After we unnest tokens, we can see that there are 12,185,805 total words and 885,275 unique words in the data.
+
+```{r}
+counts <- clean_ipl %>% 
+  count(year,word, sort=T) 
+
+counts %>%
+  top_n(20) %>% 
+  ggplot() + 
+  geom_col(aes(x = n, y=reorder(word,n)), fill="blue") +
+  ggtitle("Top 20 Words in All 3 Years")
+```
+
+```{r}
+counts %>%
+  group_by(year) %>%
+  slice_max(n = 10, order_by = n) %>%
+  filter(year != "NA") %>%
+  ggplot() + 
+  geom_col(aes(x = n, y=reorder(word,n)), fill = "blue") +
+  facet_wrap(~year, scales = "free") +
+  ggtitle("Top 10 Words Each Year")
+```
+
+Here are the most common words in the data. VI fan of the match is by far the most common, followed by csk, fan of the match, rcb, mi, and ans. Besides the fan of the match these are all acronyms for the teams that play in the IPL. As we see in the breakdown by year, 2020 had no fan of the match as there were no fans in 2020. CSK and RCB are the most popular teams, so they are at the top of all three years. The rest are followed mostly by the teams that did well that year.
+
+```{r}
+ipl_sent <- clean_ipl %>% 
+  inner_join(get_sentiments(),
+             relationship="many-to-many") %>% 
+  count(year,sentiment) %>% 
+  filter(year != "NA") %>%
+  pivot_wider(names_from=sentiment,
+              values_from=n)
+ipl_sent
+```
+
+```{r}
+ipl_sent.melt <-reshape2::melt(ipl_sent,id='year') 
+
+ggplot(ipl_sent.melt, aes(x=year, y=value, fill=variable)) + 
+geom_col(position='dodge') + 
+ggtitle("Word Sentiment by Year")
+```
+
+```{r}
+# Perform ANOVA
+ipl_anova <- aov(value ~ year, data = ipl_sent.melt)
+
+# Summary of ANOVA
+summary(ipl_anova)
+```
+
+Here I did an analysis on the positive and negative sentiments by year. As we can see, all three years have a similar ratio of more positive sentiments with negative sentiments. I ran an anova test to see if there was any difference between the variation of the 3 years, but the P-Value was .645 meaning there was no significant difference.
+
+```{r}
+ipl_sent_ver <- clean_ipl %>% 
+  inner_join(get_sentiments(),
+             relationship="many-to-many") %>% 
+  count(user_verified,sentiment) %>% 
+  pivot_wider(names_from=sentiment,
+              values_from=n)
+ipl_sent_ver
+```
+
+```{r}
+ipl_sent_ver_melt <- reshape2::melt(ipl_sent_ver, 
+                                   id.vars = 'user_verified') 
+
+ggplot(ipl_sent_ver_melt, aes(x = user_verified, y = value, 
+                             fill = variable)) + 
+  geom_col(position = 'dodge') + 
+  ggtitle("Word Sentiment by Verification Status")
+```
+
+```{r}
+ver_true <- clean_ipl %>% 
+  filter(user_verified == "True") %>% 
+  inner_join(get_sentiments("afinn"))
+
+ver_false <- clean_ipl %>% 
+  filter(user_verified == "False") %>% 
+  inner_join(get_sentiments("afinn"))
+
+t.test(ver_false$value,
+       ver_true$value)
+```
+
+Here I did an analysis on the positive and negative sentiments by verification status of the user. As we can see, both verified and non-verified users seem to have a similar ratio of more positive sentiments with negative sentiments. I ran a t test to see if there was any significant difference between the means of the sentiments. The t test showed that there was a significant difference and that the verified users had a slightly higher sentiment score than non verified users in their tweets.
+
+```{r}
+clean_ipl %>% 
+  inner_join(get_sentiments("nrc"),
+             relationship = "many-to-many" )%>% 
+  count(year,sentiment) %>% 
+  filter(year != "NA") %>%
+  ggplot() +
+  geom_col(aes(x=n,y=reorder(sentiment,n)),fill = "red") +
+  facet_wrap(~year, scales = "free") +
+  ggtitle("Emotion Sentiments by Year")
+```
+
+Here we used the"nrc" package in get sentiments which groups the words into categories based on a type of emotion. I grouped the graphs by year and as we can see, the year does not have an impact in the emotions as the proportion of each emotion is relatively equal each year.
+
+```{r}
+clean_ipl %>% 
+  inner_join(get_sentiments("nrc"),
+             relationship = "many-to-many" )%>% 
+  count(year,sentiment,user_verified) %>% 
+  filter(year != "NA") %>%
+  ggplot() +
+  geom_col(aes(x=n,y=reorder(sentiment,n), color = user_verified),
+           fill ="red") +
+  facet_wrap(~user_verified, scales ="free") +
+  ggtitle("Emotion Sentiments by Verification Status")
+```
+
+When analyzing the emotions based on verification status, there is a slight difference as verified users top three emotions are positive, anticipation and negative. However, non verified users top three emotions are positive, anticipation, and trust. Although, these are different, most of the proportions are relatively equal and there is not much difference.
+
+```{r}
+clean_ipl %>% 
+  inner_join(get_sentiments("nrc"),
+             relationship = "many-to-many" )%>% 
+  count(year,sentiment,is_retweet) %>% 
+  filter(year != "NA") %>%
+  ggplot() +
+  geom_col(aes(x=n,y=reorder(sentiment,n), color = is_retweet),
+           fill = "red") +
+  facet_wrap(~is_retweet, scales = "free") +
+  ggtitle("Emotion Sentiments by Retweet")
+```
+
+When analyzing the emotions based on if it was a re tweet, there is a major difference in emotions. Re tweets top three emotions are positive, anticipation and trust, while non re tweets top three emotions are positive, negative, and anticipation.
+
+```{r}
+clean_ipl %>% 
+  inner_join(get_sentiments("afinn"),
+            relationship = "many-to-many") %>%
+  count(year,word,value,sort=T) %>% 
+  top_n(n = 20,wt = n) %>% 
+  ggplot(aes(x = value, y = reorder(word, n), fill = value)) +  # Use fill aesthetic for color
+  geom_col() +
+  scale_fill_gradient2(low = "red", high = "green", midpoint = 0) +  # Specify colors for positive and negative sentiments
+  ggtitle("Top 20 Word Sentiment")
+```
+
+```{r}
+clean_ipl %>% 
+  inner_join(get_sentiments("afinn"),
+            relationship = "many-to-many") %>%
+  count(year,word,value,sort=T) %>% 
+  group_by(year) %>%
+  slice_max(n=20, order_by = n) %>%
+ # top_n(n = 20,wt = n) %>% 
+  filter(year != "NA") %>%
+  ggplot(aes(x = value, y = reorder(word, n), fill = value)) +  # Use fill aesthetic for color
+  geom_col() +
+  scale_fill_gradient2(low = "red", high = "green", midpoint = 0) +  # Specify colors for positive and negative sentiments
+  facet_wrap(~year, scales = "free") +
+  ggtitle("Top 20 Word Sentiment by Year")
+```
+
+Here is just a graph of the most common words and their sentiments. We can see there are more positive sentiments than negative sentiments. By year the overall sentiments are relatively the same.
+
+```{r}
+clean_ipl %>% 
+  inner_join(get_sentiments("afinn"),
+            relationship = "many-to-many") %>%
+  count(user_verified,year,word,value,sort=T) %>% 
+  group_by(user_verified) %>%
+  slice_max(n=20, order_by = n) %>%
+ # top_n(n = 20,wt = n) %>% 
+  filter(year != "NA") %>%
+  ggplot(aes(x = value, y = reorder(word, n), fill = value)) +  # Use fill aesthetic for color
+  geom_col() +
+  scale_fill_gradient2(low = "red", high = "green", midpoint = 0) +
+  facet_wrap(~user_verified, scales = "free")+
+  ggtitle("Top 20 Word Sentiment by Verification Status")
+```
+
+Here we can see that the top words by verified users have more negative sentiments than non verified users even though the t test showed us that the verified users had a higher mean of sentiment score.
+
+```{r}
+clean_ipl %>% 
+  inner_join(get_sentiments("afinn"),
+            relationship = "many-to-many") %>%
+  count(is_retweet,year,word,value,sort=T) %>% 
+  group_by(is_retweet) %>%
+  slice_max(n=20, order_by = n) %>%
+ # top_n(n = 20,wt = n) %>% 
+  filter(year != "NA") %>%
+  ggplot(aes(x = value, y = reorder(word, n), fill = value)) +  # Use fill aesthetic for color
+  geom_col() +
+  scale_fill_gradient2(low = "red", high = "green", midpoint = 0) +
+  facet_wrap(~is_retweet, scales = "free")+
+  ggtitle("Top 20 Word Sentiment by Retweet")
+```
+
+```{r}
+clean_ipl %>%
+  inner_join(get_sentiments("afinn"), 
+             relationship = "many-to-many") %>%
+  count(user_followers, word, value, sort = TRUE) %>%
+  top_n(n = 200, wt = n) %>%
+  ggplot(aes(x = value, y = user_followers, color = word)) +
+  geom_point(show.legend = F) +
+  ggtitle("Sentiments vs User Followers") +
+  xlab("Sentiment Value") +
+  ylab("User Followers")
+```
+
+Here is a scatter plot comparing sentiment value to user followers. Overall, we can see the accounts with more followers usually have higher sentiments, while the accounts with less followers have lower sentiments.
+
+```{r}
+clean_ipl %>%
+  inner_join(get_sentiments("afinn"), 
+             relationship = "many-to-many") %>%
+  count(year, user_followers, word, value, sort = TRUE) %>%
+  top_n(n = 200, wt = n) %>%
+  filter(year != "NA") %>%
+  ggplot(aes(x = value, y = user_followers, color = word)) +
+  geom_point(show.legend = F) +
+  facet_wrap(~year, scales = "free") +  # Facet by year
+  ggtitle("Sentiments vs User Followers by Year") +
+  xlab("Sentiment Value") +
+  ylab("User Followers")
+```
+
+Here are some scatter plots comparing sentiment values to user followers by year. In 2020 and 2022, the accounts with more followers had slight positive sentiment scores, while the accounts with less followers had more extreme sentiments either positive or negative. In 2021, the accounts with the highest followers had a higher positive sentiment and the accounts with the lowest followers had a lower sentiment.
+
+```{r}
+reg_data <-clean_ipl %>%
+  inner_join(get_sentiments("afinn"), 
+             relationship = "many-to-many")
+
+model <- lm(value ~ user_followers+user_verified+is_retweet+user_friends, data = reg_data)
+
+# Summarize the model
+summary(model)
+```
+
+```{r}
+# Visualize the regression
+ggplot(reg_data, aes(x = user_followers, y = value)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Regression of Sentiment on Followers",
+       x = "Followers",
+       y = "Sentiment Value")
+```
+
+In order to test my hypothesis, I ran a regression model to predict sentiment score. I added user followers, user friends, if the user was verified, and if the tweet was a re tweet. User followers, user friends, and if the user was verified were all significant predictors in the model and affect sentiment score in a slightly positive way.
+
+```{r}
+clean_ipl %>%
+  count(year,user_name,word) %>%
+  bind_tf_idf(term = word,document = user_name,n = n) %>%
+  top_n(n = 20,wt = n) %>%
+  filter(year != "NA") %>%
+  ggplot(aes(x = tf_idf, y = reorder(word,tf_idf))) + 
+  geom_col(fill = "pink",show.legend = F) +
+  ggtitle("TF-IDF top 20 Words")
+```
+
+Here I made a graph with the most important words based on tf-idf. The top three words are sportsmonks, vi fan of the match, and ironman_den.
+
+```{r}
+clean_ipl %>%
+  count(year,user_name,word) %>%
+  bind_tf_idf(term = word,document = user_name,n = n) %>%
+  group_by(year) %>%
+  slice_max(n=10, order_by = n) %>%
+  filter(year != "NA") %>%
+  ggplot(aes(x = tf_idf, y = reorder(word,tf_idf))) + 
+  geom_col(fill = "pink",show.legend = F) +
+  facet_wrap(~year, scales = "free") +
+  ggtitle("TF-IDF top 20 Words by Year")
+```
+
+Now I did the tf-idf by year. In 2021 and 2022, fan of the match was by far the most important word. However, in 2020, there were no fans and sportsmonks was the top word. Sportsmonks is a sports data website that can help users analyze the game from home better. My assumption is that sportsmonks was a way for fans to get into the game as they could not attend in person in 2022.
+
+```{r}
+clean_ipl %>%
+  count(is_retweet,user_name,word) %>%
+  bind_tf_idf(term = word,document = user_name,n = n) %>%
+  group_by(is_retweet) %>%
+  slice_max(n=10, order_by = n) %>%
+  filter(tf_idf >= .01) %>%
+  ggplot(aes(x = tf_idf, y = reorder(word,tf_idf),
+             color = is_retweet)) + 
+  geom_col(fill = "pink",show.legend = F) +
+  facet_wrap(~is_retweet, scales = "free") +
+  ggtitle("TF-IDF top 20 Words by Retweet")
+```
+
+```{r}
+clean_ipl %>%
+  count(user_verified,user_name,word) %>%
+  bind_tf_idf(term = word,document = user_name,n = n) %>%
+  filter(user_verified %in% c("True", "False")) %>%
+  group_by(user_verified) %>%
+  slice_max(n=10, order_by = n) %>%
+  ggplot(aes(x = tf_idf, y = reorder(word,tf_idf))) + 
+  geom_col(fill ="pink",show.legend = F) +
+  facet_wrap(~user_verified, scales = "free") +
+  ggtitle("TF-IDF top 20 Words by Verification Status")
+```
+
+Here I did tf-idf by verification status. Verified profiles most important words are a lot of team names and organization names, while non verified profiles have sportsmonks and vi fan of the match as the top words. This is because a lot teams and organization are verified profiles, while a lot of fans are not.
+
+My conclusions to my research questions are that sentiments and emotions do not change over time, but they do change by verification status. Verified profiles tend to have more positive sentiments than non verified profiles. User count does affect sentiments. More often than not, accounts with more followers tend to have higher positive sentiments than accounts with less followers. The most important words do change over time, especially because of COVID, and by verification status. There was no live fan experience in 2020, so the fan of the match was very important in 2021 and 2022. However, sports data websites were important in 2020 as it enhanced the viewer experience from home. Verified profiles give an organization and team perspective, while non verified profiles give a fan perspective. The next steps would be to run a topic model to see what topics these tweets are talking about and running a bigram/trigram analysis to see which words are connected with each other.
